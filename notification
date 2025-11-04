@@ -1,0 +1,104 @@
+package core;
+
+import model.Notification;
+import subscriber.Subscriber;
+
+import java.time.Instant;
+import java.util.*;
+import java.util.concurrent.*;
+
+public class NotificationBroker {
+    private final ConcurrentMap<String, CopyOnWriteArraySet<Subscriber>> subsByTopic = new ConcurrentHashMap<>();
+    private final BlockingQueue<Notification> queue = new PriorityBlockingQueue<>(256, (a, b) -> {
+        int p = a.getPriority().compareTo(b.getPriority());
+        return p != 0 ? p * -1 : b.toString().compareTo(a.toString());
+    });
+
+    private final Deque<Notification> deadLetter = new ArrayDeque<>();
+    private final int deadLetterMax = 200;
+
+    private final ExecutorService deliveryPool;
+    private final Thread dispatcherThread;
+
+    private final int maxAttempts = 3;
+    private final long baseBackoffMillis = 200;
+
+    private volatile boolean running = true;
+
+    public NotificationBroker(int deliveryThreads) {
+        this.deliveryPool = Executors.newFixedThreadPool(deliveryThreads);
+        this.dispatcherThread = new Thread(this::dispatchLoop, "dispatcher");
+        this.dispatcherThread.start();
+    }
+
+    public void subscribe(String topic, Subscriber sub) {
+        subsByTopic.computeIfAbsent(topic, t -> new CopyOnWriteArraySet<>()).add(sub);
+    }
+
+    public void publish(Notification n) {
+        if (!running) throw new IllegalStateException("Broker stopped");
+        queue.offer(n);
+    }
+
+    public void shutdown() {
+        running = false;
+        dispatcherThread.interrupt();
+        deliveryPool.shutdown();
+    }
+
+    private void dispatchLoop() {
+        while (running) {
+            try {
+                Notification n = queue.poll(500, TimeUnit.MILLISECONDS);
+                if (n == null) continue;
+                if (n.isExpired()) {
+                    log("Expired, dropping: " + n);
+                    continue;
+                }
+
+                var subs = subsByTopic.getOrDefault(n.getTopic(), new CopyOnWriteArraySet<>());
+                if (subs.isEmpty()) {
+                    moveToDeadLetter(n);
+                    continue;
+                }
+
+                for (Subscriber s : subs) {
+                    if (!s.acceptsTopic(n.getTopic())) continue;
+                    deliveryPool.submit(() -> deliverWithRetry(s, n));
+                }
+            } catch (InterruptedException e) {
+                if (!running) break;
+            } catch (Exception e) {
+                log("Dispatch error: " + e.getMessage());
+            }
+        }
+    }
+
+    private void deliverWithRetry(Subscriber sub, Notification n) {
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                if (n.isExpired()) return;
+                sub.onNotify(n);
+                return;
+            } catch (Exception ex) {
+                if (attempt == maxAttempts) {
+                    moveToDeadLetter(n);
+                    return;
+                }
+                try { Thread.sleep((long) (baseBackoffMillis * Math.pow(2, attempt - 1))); }
+                catch (InterruptedException ignored) {}
+            }
+        }
+    }
+
+    private void moveToDeadLetter(Notification n) {
+        synchronized (deadLetter) {
+            if (deadLetter.size() >= deadLetterMax) deadLetter.removeFirst();
+            deadLetter.addLast(n);
+        }
+    }
+
+    private void log(String s) {
+        System.out.println("[Broker] " + s);
+    }
+}
