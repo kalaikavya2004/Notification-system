@@ -1,0 +1,37 @@
+package model;
+
+import java.time.*;
+
+import core.Priority;
+
+public class Notification {
+    private final long id;
+    private final String topic;
+    private final String message;
+    private final Priority priority;
+    private final Instant createdAt;
+    private final Duration ttl;
+
+    public Notification(long id, String topic, String message, Priority priority, Duration ttl) {
+        this.id = id;
+        this.topic = topic;
+        this.message = message;
+        this.priority = priority;
+        this.createdAt = Instant.now();
+        this.ttl = ttl;
+    }
+
+    public boolean isExpired() {
+        return ttl != null && Instant.now().isAfter(createdAt.plus(ttl));
+    }
+
+    public long getId() { return id; }
+    public String getTopic() { return topic; }
+    public String getMessage() { return message; }
+    public Priority getPriority() { return priority; }
+
+    @Override
+    public String toString() {
+        return "[#" + id + " " + priority + " " + topic + "] " + message;
+    }
+}
