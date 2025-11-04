@@ -1,0 +1,9 @@
+package subscriber;
+
+import model.Notification;
+
+public interface Subscriber {
+    String name();
+    boolean acceptsTopic(String topic);
+    void onNotify(Notification n) throws Exception;
+}
