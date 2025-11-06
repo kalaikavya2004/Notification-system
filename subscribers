@@ -1,0 +1,36 @@
+package subscriber;
+
+import model.Notification;
+import java.util.*;
+import java.time.LocalTime;
+
+public class UserClient implements Subscriber {
+    private final String name;
+    private final Set<String> topics;
+    private final Random rng = new Random();
+    private final double failureRate;
+
+    public UserClient(String name, Collection<String> topics, double failureRate) {
+        this.name = name;
+        this.topics = new HashSet<>(topics);
+        this.failureRate = Math.max(0, Math.min(1, failureRate));
+    }
+
+    @Override
+    public String name() { return name; }
+
+    @Override
+    public boolean acceptsTopic(String topic) { return topics.contains(topic); }
+
+    @Override
+    public void onNotify(Notification n) throws Exception {
+        Thread.sleep(50 + rng.nextInt(100));
+        if (rng.nextDouble() < failureRate)
+            throw new RuntimeException("Simulated transient error");
+        System.out.println(ts() + " ✅ Delivered to " + name + ": " + n);
+    }
+
+    private String ts() {
+        return "[" + LocalTime.now().withNano(0) + "]";
+    }
+}

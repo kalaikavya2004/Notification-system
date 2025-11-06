@@ -1,0 +1,44 @@
+import core.*;
+import model.*;
+import subscriber.*;
+
+import java.time.Duration;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
+
+public class MainApp {
+    private static final AtomicLong ID = new AtomicLong(1000);
+
+    private static Notification create(String topic, String msg, Priority p, Duration ttl) {
+        return new Notification(ID.incrementAndGet(), topic, msg, p, ttl);
+    }
+
+    public static void main(String[] args) throws Exception {
+        NotificationBroker broker = new NotificationBroker(4);
+
+        Subscriber mobile = new UserClient("Kavya-Mobile", List.of("orders", "alerts"), 0.10);
+        Subscriber web    = new UserClient("Kavya-Web", List.of("alerts", "marketing"), 0.00);
+        broker.subscribe("orders", mobile);
+        broker.subscribe("alerts", mobile);
+        broker.subscribe("alerts", web);
+        broker.subscribe("marketing", web);
+
+        ScheduledExecutorService producer = Executors.newScheduledThreadPool(1);
+
+        producer.scheduleAtFixedRate(() ->
+            broker.publish(create("alerts", "High CPU usage detected", Priority.HIGH, Duration.ofSeconds(10))),
+            0, 2, TimeUnit.SECONDS);
+
+        producer.scheduleAtFixedRate(() ->
+            broker.publish(create("orders", "Order #" + new Random().nextInt(9999) + " placed",
+                Priority.NORMAL, Duration.ofSeconds(20))),
+            500, 3, TimeUnit.SECONDS);
+
+        Thread.sleep(15000);
+
+        producer.shutdownNow();
+        broker.shutdown();
+        System.out.println("\n✅ Real-Time Notification System stopped cleanly.");
+    }
+}
